@@ -111,12 +111,13 @@ class ThresholdManager():
 		ram_data = self.get_ram_data()
 		LOG.debug('VCPUS %(vcpus)s', {'vcpus': vcpus_data})
 		vcpu_usage = vcpus_data[1]/vcpus_data[0]*100
+		LOG.debug('VCPU Usage')
 		ram_usage = ram_data[1]/ram_data[0]*100
 
 		total_usage = (vcpu_usage+ram_usage)/2
 		LOG.debug('Total Usage %(total_usage)s', {'total_usage': total_usage})
 
-		if total_usage < 25:
+		if total_usage < 45:
 			ThresholdManager.on_demand_high = 1
 			ThresholdManager.on_demand_low = 1
 			ThresholdManager.spot = 1
@@ -127,7 +128,7 @@ class ThresholdManager():
 					server_name = i['uuid']
 					subprocess.Popen("/opt/stack/nova/nova/scheduler/./nova_unpause_server.sh %s" % (str(server_name)), shell=True)
 					LOG.debug("Unpausing %(unpaused_server)s", {'unpaused_server':i['name']})
-		elif total_usage >=25 and total_usage < 44:
+		elif total_usage >=45 and total_usage < 70:
 			ThresholdManager.on_demand_high = 1
 			ThresholdManager.on_demand_low = 1
 			ThresholdManager.spot = 0
@@ -139,7 +140,7 @@ class ThresholdManager():
 					subprocess.Popen("/opt/stack/nova/nova/scheduler/./nova_unpause_server.sh %s" % (str(server_name)), shell=True)
 					LOG.debug("Unpausing %(unpaused_server)s", {'unpaused_server':i['name']})
 
-		elif total_usage >=45:
+		elif total_usage >=70:
 			ThresholdManager.on_demand_high = 1
 			ThresholdManager.on_demand_low = 0
 			ThresholdManager.spot = 0

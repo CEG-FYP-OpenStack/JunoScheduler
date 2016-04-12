@@ -148,145 +148,21 @@ class FilterScheduler(driver.Scheduler):
         self.notifier.info(context, 'scheduler.select_destinations.start',
                            dict(request_spec=request_spec))
 
-  
-    	flavor = request_spec['instance_type']
-    	LOG.debug('Flavor name %(name)s', {'name': flavor['name'] })
+        num_instances = request_spec['num_instances']
+        selected_hosts = self._schedule(context, request_spec,
+                                        filter_properties)
 
-        vm_instance_properties = request_spec['instance_type']
-        vm_ram = vm_instance_properties['memory_mb']
-        vm_vcpus = vm_instance_properties['vcpus']
-        vm_disk = vm_instance_properties['root_gb']
+        # Couldn't fulfill the request_spec
+        if len(selected_hosts) < num_instances:
+            raise exception.NoValidHost(reason='')
 
-        vm_details = {}
-        vm_details['disk'] = vm_disk
-        vm_details['ram'] = vm_ram
-        vm_details['vcpus'] = vm_vcpus
-        LOG.debug("VM request details: %(vm_details)s", {'vm_details': vm_details})
+        dests = [dict(host=host.obj.host, nodename=host.obj.nodename,
+                      limits=host.obj.limits) for host in selected_hosts]
 
-        instance_manager = InstanceManager()
-        node_details = instance_manager.node_details()
-        LOG.debug('Node Details %(node_details)s', {'node_details': node_details})
-
-    	instance_type = str(flavor['name'])
-        instance_data = {}
-    	allowed_list = []
-    	threshold_manager = ThresholdManager()
-    	attributes = threshold_manager.get_attributes()
-    	LOG.debug('Threshold manager %(attr)s', {'attr': attributes})
-
-
-    	if 'on_demand_high' in attributes:
-    		allowed_list.append('tiny.on-demand-high')
-    	if 'on_demand_low' in attributes:
-    		allowed_list.append('tiny.on-demand-low')
-    	if 'spot' in attributes:
-    		allowed_list.append('tiny.spot')
-
-    	if str(flavor['name']) not in allowed_list:
-    		LOG.debug('Server seems to be loaded. %(flavor_name)s cannot be created', {'flavor_name': flavor['name']})
-    		reason = _('Server load')
-    		raise exception.NoValidHost(reason=reason)
-
-        # return dests
-
-    	# num_instances = spec_obj.num_instances
-    	
-        result_node = self.best_fit(vm_details, node_details)
-        if result_node == None:
-            LOG.debug('No Servers are currently available')
-            reason = _('Server load')
-            raise exception.NoValidHost(reason=reason)
-        selected_node_details = None
-        for node in node_details:
-            if result_node == node['hostname']:
-                selected_node_details = node
-                break
-
-        dest = [{'host':unicode(selected_node_details['hostname']),
-                'nodename':unicode(selected_node_details['hostname']),
-                'limits': {'memory_mb':selected_node_details['total_ram'],
-                            'disk_gb': selected_node_details['total_disk']}}]
-
-        return dest
+        self.notifier.info(context, 'scheduler.select_destinations.end',
+                           dict(request_spec=request_spec))
+        return dests
         
-    def best_fit_with_migration(self,vm, node_details):
-        """Returns a best fit node"""
-        result_node = None
-        min_migration_list = []
-        min_no_of_migration = sys.maxint
-        min_migration_data = sys.maxint
-        result_node = self.best_fit(vm, node_details)
-
-        if result_node ==  None:
-            flag = False
-            instance_manager = InstanceManager()
-            feasible_nodes = instance_manager.feasible_nodes(vm)
-            for f in feasible_nodes:
-                local_migration_list = []
-                local_no_migration = 0
-                local_migration_data = 0
-                vm_list = instance_manager.vm_list(f['hostname'])
-                temp_node_details = []
-                for node in node_details:
-                    if node['hostname'] != f['nodename']:
-                        temp_node_details.append(node)
-                new_node_disk = f['total_disk'] - f['free_disk']
-                new_node_ram = f['total_ram'] - f['free_ram']
-                new_node_vcpus = f['total_vcpus'] - f['total_vcpus']
-                for v in vm_list:
-                    dest_node = best_fit(v, temp_node_details)
-                    if dest_node == None:
-                        continue
-                    else:
-                        local_migration_list.append(tuple(v,dest_node))
-                        local_no_migration += 1
-                        local_migration_data = local_migration_data + v['disk']
-
-                        new_node_disk = new_node_disk - v['disk']
-                        new_node_ram = new_node_ram - v['ram']
-                        new_node_vcpus = new_node_vcpus - v['vcpus']
-
-                        if new_node_disk >= vm['disk'] and new_node_vcpus >= vm['vcpus'] and new_node_ram >= vm['ram']:
-                            flag = True
-                            break
-
-                if flag == True:
-                    if local_no_migration < min_no_of_migration:
-                        min_no_of_migration = local_no_migration
-                        min_migration_data = local_migration_data
-                        min_migration_list = local_migration_list
-                        result_node = f['nodename']
-                    elif local_no_migration == min_no_of_migration:
-                        if local_migration_data < min_migration_data:
-                            min_no_of_migration = local_no_migration
-                            min_migration_data = local_migration_data
-                            min_migration_list = local_migration_list
-                            result_node = f['nodename']
-
-        return result_node
-        
-    def best_fit(self,vm, node_details):
-        LOG.debug("Saleem")
-        weights = [0.5,0.3,0.2]
-        result_node = None
-        cur_ratio = 1.0
-        for n in node_details:
-            disk_ratio = (n['free_disk'] - vm['disk'])/n['total_disk']
-            ram_ratio = (n['free_ram'] - vm['ram'])/n['total_ram']
-            vcpus_ratio = (n['free_vcpus'] - vm['vcpus'])/n['total_vcpus']
-            total_ratio = weights[0]*disk_ratio + weights[1]*ram_ratio + weights[2]*vcpus_ratio
-            LOG.debug('Node Ratio %(_node)s', {'_node': total_ratio})
-            LOG.debug('Disk Ratio %s Ram ratio %s Cpu ratio %s' % (disk_ratio,ram_ratio,vcpus_ratio))
-            if disk_ratio >= 0 and ram_ratio >= 0 and vcpus_ratio >= 0:
-                if total_ratio < cur_ratio:
-                    cur_ratio = total_ratio
-                    result_node = n['hostname']
-                    LOG.debug('Node name %(node)s', {'node': n['hostname']})
-        LOG.debug('Current ratio %(current_rat)s', {'current_rat': cur_ratio})
-        LOG.debug('Selected node %(selected_node)s', {'selected_node': result_node})
-        return result_node
-
-
     def _provision_resource(self, context, weighed_host, request_spec,
             filter_properties, requested_networks, injected_files,
             admin_password, is_first_time, instance_uuid=None,
